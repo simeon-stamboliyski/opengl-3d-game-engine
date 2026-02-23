@@ -9,9 +9,10 @@ int main() {
         return -1;
     }
 
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 
     GLFWwindow* window = glfwCreateWindow(1280, 720, "GameDevelopmentProject", nullptr, nullptr);
 
@@ -23,17 +24,19 @@ int main() {
 
     glfwMakeContextCurrent(window);
 
+    glewExperimental = GL_TRUE;
     if (glewInit() != GLEW_OK) {
         glfwTerminate();
         return -1;
     }
 
     std::string vertexShaderSource = R"(
-        #version 330 core
-        layout (location = 0) vec3 position;
+        #version 410 core
+
+        in vec3 position;
 
         void main() {
-            gl_Position = vec4(position.x, position.y, position.z, 1.0);
+            gl_Position = vec4(position, 1.0);
         }
     )";
 
@@ -55,7 +58,7 @@ int main() {
     }
 
     std::string fragmentShaderSource = R"(
-        #version 330 core
+        #version 410 core
         out vec4 fragColor;
 
         void main() {
@@ -84,6 +87,8 @@ int main() {
     glAttachShader(shaderProgram, vertexShader);
     glAttachShader(shaderProgram, fragmentShader);
 
+    glBindAttribLocation(shaderProgram, 0, "position");
+
     glLinkProgram(shaderProgram);
 
     glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
@@ -102,9 +107,32 @@ int main() {
         0.5f, -0.5f, 0.0f
     };
 
+    GLuint vbo;
+
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    GLuint vao;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, false, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+
+
     while (!glfwWindowShouldClose(window)) {
-        glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+        glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(shaderProgram);
+        glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
