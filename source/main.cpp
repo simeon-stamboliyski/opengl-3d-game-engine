@@ -4,7 +4,39 @@
 #include <vector>
 #include <string>
 
+struct Vec2 {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+Vec2 offset;
+
+void keyCallback(GLFWwindow* window, int key, int scanCode, int action, int mods) {
+    if (action == GLFW_PRESS) {
+        switch (key) {
+            case GLFW_KEY_UP:
+                offset.y += 0.01f;
+                break;
+            case GLFW_KEY_DOWN:
+                offset.y -= 0.01f;
+                break;
+            case GLFW_KEY_RIGHT:
+                offset.x += 0.01f;
+                break;
+            case GLFW_KEY_LEFT:
+                offset.x -= 0.01f;
+                break;
+            default:
+                break;
+        }
+    }
+}
+
 int main() {
+#if defined (__linux__)
+    glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+#endif
+
     if (!glfwInit()) {
         return -1;
     }
@@ -22,6 +54,7 @@ int main() {
         return -1;
     }
 
+    glfwSetKeyCallback(window, keyCallback);
     glfwMakeContextCurrent(window);
 
     glewExperimental = GL_TRUE;
@@ -36,11 +69,17 @@ int main() {
         in vec3 position;
         in vec3 color;
 
+        uniform vec2 uOffset;
+
         out vec3 vColor;
 
         void main() {
             vColor = color;
-            gl_Position = vec4(position, 1.0);
+
+            vec3 pos = position;
+            pos.xy += uOffset;
+
+            gl_Position = vec4(pos, 1.0);
         }
     )";
 
@@ -148,6 +187,7 @@ int main() {
     glBindVertexArray(0);
 
     GLint uColorLoc = glGetUniformLocation(shaderProgram, "uColor");
+    GLint uOffsetLoc = glGetUniformLocation(shaderProgram, "uOffset");
 
     while (!glfwWindowShouldClose(window)) {
         glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
@@ -155,6 +195,7 @@ int main() {
 
         glUseProgram(shaderProgram);
         glUniform4f(uColorLoc, 0.0f, 1.0f, 0.0f, 1.0f);
+        glUniform2f(uOffsetLoc, offset.x, offset.y);
         glBindVertexArray(vao);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
