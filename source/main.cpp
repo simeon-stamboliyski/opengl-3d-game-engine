@@ -2,35 +2,144 @@
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <vector>
+#include <random>
+#include <chrono>
+#include <cmath>
+#include <map>
 #include <string>
 
 struct Vec2 {
-    float x = 0.0f;
-    float y = 0.0f;
+    float x, y;
+    Vec2() : x(0.0f), y(0.0f) {}
+    Vec2(float x, float y) : x(x), y(y) {}
 };
 
-Vec2 offset;
-
-void keyCallback(GLFWwindow* window, int key, int scanCode, int action, int mods) {
-    if (action == GLFW_PRESS) {
-        switch (key) {
-            case GLFW_KEY_UP:
-                offset.y += 0.01f;
-                break;
-            case GLFW_KEY_DOWN:
-                offset.y -= 0.01f;
-                break;
-            case GLFW_KEY_RIGHT:
-                offset.x += 0.01f;
-                break;
-            case GLFW_KEY_LEFT:
-                offset.x -= 0.01f;
-                break;
-            default:
-                break;
-        }
+struct Vec2i {
+    int x, y;
+    Vec2i() : x(0), y(0) {}
+    Vec2i(float x, float y) : x(x), y(y) {}
+    bool operator==(const Vec2i& other) const {
+        return x == other.x && y == other.y;
     }
-}
+};
+
+struct Vec3 {
+    float r, g, b;
+    Vec3() : r(0.0f), g(0.0f), b(0.0f) {}
+    Vec3(float r, float g, float b) : r(r), g(g), b(b) {}
+};
+
+const int GRID_WIDTH = 20;
+const int GRID_HEIGHT = 20;
+const float UPDATE_INTERVAL = 0.15f;
+const float CELL_WIDTH = 2.0f / GRID_WIDTH;
+const float CELL_HEIGHT = 2.0f / GRID_HEIGHT;
+
+enum class Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+    None
+};
+
+Direction snakeDir = Direction::None;
+std::vector<Vec2i> snake = { Vec2i(5, 10), Vec2i(4, 10), Vec2i(3, 10) };
+Vec2i fruit;
+int score = 0;
+bool gameOver = false;
+bool gameStarted = false;
+float timeSinceLastUpdate = false;
+float snakeSpeed = UPDATE_INTERVAL;
+
+std::string vertexShaderSource = R"(
+    #version 410 core
+
+    in vec2 aPos;
+    uniform vec2 uOffset;
+    uniform vec2 uScale;
+
+    void main() {
+        vec2 position = (aPos * uScale) + uOffset;
+        gl_Position = vec4(position, 1.0);
+    }
+)";
+
+std::string fragmentShaderSource = R"(
+    #version 410 core
+    out vec4 fragColor;
+    uniform vec3 uColor;
+
+    void main() {
+        fragColor = vec4(uColor, 1.0);
+    }
+)";
+
+GLuint shaderProgram;
+GLuint vao, vbo;
+GLuint uOffsetLoc, uScaleLoc, uColorLoc;
+
+const int FONT_WIDTH = 5;
+const int FONT_HEIGHT = 5;
+const int FONT_SPACING = 1;
+
+std::map<char, std::vector<int>> fontMap = {
+    {' ', {0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0}},
+    {'A', {0,1,1,0,0, 1,0,0,1,0, 1,1,1,1,0, 1,0,0,1,0, 1,0,0,1,0}},
+    {'B', {1,1,1,0,0, 1,0,0,1,0, 1,1,1,0,0, 1,0,0,1,0, 1,1,1,0,0}},
+    {'C', {0,1,1,1,0, 1,0,0,0,0, 1,0,0,0,0, 1,0,0,0,0, 0,1,1,1,0}},
+    {'D', {1,1,1,0,0, 1,0,0,1,0, 1,0,0,1,0, 1,0,0,1,0, 1,1,1,0,0}},
+    {'E', {1,1,1,1,0, 1,0,0,0,0, 1,1,1,0,0, 1,0,0,0,0, 1,1,1,1,0}},
+    {'F', {1,1,1,1,0, 1,0,0,0,0, 1,1,1,0,0, 1,0,0,0,0, 1,0,0,0,0}},
+    {'G', {0,1,1,1,0, 1,0,0,0,0, 1,0,1,1,0, 1,0,0,1,0, 0,1,1,1,0}},
+    {'H', {1,0,0,1,0, 1,0,0,1,0, 1,1,1,1,0, 1,0,0,1,0, 1,0,0,1,0}},
+    {'I', {1,1,1,0,0, 0,1,0,0,0, 0,1,0,0,0, 0,1,0,0,0, 1,1,1,0,0}},
+    {'J', {0,0,1,1,0, 0,0,0,1,0, 0,0,0,1,0, 1,0,0,1,0, 0,1,1,0,0}},
+    {'K', {1,0,0,1,0, 1,0,1,0,0, 1,1,0,0,0, 1,0,1,0,0, 1,0,0,1,0}},
+    {'L', {1,0,0,0,0, 1,0,0,0,0, 1,0,0,0,0, 1,0,0,0,0, 1,1,1,1,0}},
+    {'M', {1,0,0,0,1, 1,1,0,1,1, 1,0,1,0,1, 1,0,0,0,1, 1,0,0,0,1}},
+    {'N', {1,0,0,0,1, 1,1,0,0,1, 1,0,1,0,1, 1,0,0,1,1, 1,0,0,0,1}},
+    {'O', {0,1,1,0,0, 1,0,0,1,0, 1,0,0,1,0, 1,0,0,1,0, 0,1,1,0,0}},
+    {'P', {1,1,1,0,0, 1,0,0,1,0, 1,1,1,0,0, 1,0,0,0,0, 1,0,0,0,0}},
+    {'Q', {0,1,1,0,0, 1,0,0,1,0, 1,0,0,1,0, 1,0,1,0,0, 0,1,0,1,0}},
+    {'R', {1,1,1,0,0, 1,0,0,1,0, 1,1,1,0,0, 1,0,1,0,0, 1,0,0,1,0}},
+    {'S', {0,1,1,1,0, 1,0,0,0,0, 0,1,1,0,0, 0,0,0,1,0, 1,1,1,0,0}},
+    {'T', {1,1,1,1,1, 0,0,1,0,0, 0,0,1,0,0, 0,0,1,0,0, 0,0,1,0,0}},
+    {'U', {1,0,0,1,0, 1,0,0,1,0, 1,0,0,1,0, 1,0,0,1,0, 0,1,1,0,0}},
+    {'V', {1,0,0,0,1, 1,0,0,0,1, 0,1,0,1,0, 0,1,0,1,0, 0,0,1,0,0}},
+    {'W', {1,0,0,0,1, 1,0,0,0,1, 1,0,1,0,1, 1,0,1,0,1, 0,1,0,1,0}},
+    {'X', {1,0,0,0,1, 0,1,0,1,0, 0,0,1,0,0, 0,1,0,1,0, 1,0,0,0,1}},
+    {'Y', {1,0,0,0,1, 0,1,0,1,0, 0,0,1,0,0, 0,0,1,0,0, 0,0,1,0,0}},
+    {'Z', {1,1,1,1,1, 0,0,0,1,0, 0,0,1,0,0, 0,1,0,0,0, 1,1,1,1,1}},
+    {'0', {0,1,1,0,0, 1,0,0,1,0, 1,0,0,1,0, 1,0,0,1,0, 0,1,1,0,0}},
+    {'1', {0,0,1,0,0, 0,1,1,0,0, 0,0,1,0,0, 0,0,1,0,0, 0,1,1,1,0}},
+    {'2', {0,1,1,0,0, 1,0,0,1,0, 0,0,1,0,0, 0,1,0,0,0, 1,1,1,1,0}},
+    {'3', {1,1,1,0,0, 0,0,0,1,0, 0,1,1,0,0, 0,0,0,1,0, 1,1,1,0,0}},
+    {'4', {0,0,1,1,0, 0,1,0,1,0, 1,0,0,1,0, 1,1,1,1,1, 0,0,0,1,0}},
+    {'5', {1,1,1,1,0, 1,0,0,0,0, 1,1,1,0,0, 0,0,0,1,0, 1,1,1,0,0}},
+    {'6', {0,1,1,0,0, 1,0,0,0,0, 1,1,1,0,0, 1,0,0,1,0, 0,1,1,0,0}},
+    {'7', {1,1,1,1,0, 0,0,0,1,0, 0,0,1,0,0, 0,1,0,0,0, 1,0,0,0,0}},
+    {'8', {0,1,1,0,0, 1,0,0,1,0, 0,1,1,0,0, 1,0,0,1,0, 0,1,1,0,0}},
+    {'9', {0,1,1,0,0, 1,0,0,1,0, 0,1,1,1,0, 0,0,0,1,0, 0,1,1,0,0}},
+    {':', {0,0,0,0,0, 0,0,1,0,0, 0,0,0,0,0, 0,0,1,0,0, 0,0,0,0,0}},
+    {'-', {0,0,0,0,0, 0,0,0,0,0, 1,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0}},
+    {'.', {0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,1,0,0}}
+};
+
+void SpawnFruit();
+void InitGame();
+void ResetGame();
+void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
+void DrawCell(const Vec2i& position, const Vec3& color);
+void DrawChar(char c, float x, float y, float scale, const Vec3& color);
+void DrawText(const std::string& text, float x, float y, float scale, const Vec3& color);
+void RenderGame(GLFWwindow* window);
+void UpdateGame(float deltaTime);
+void DrawBorder();
+void DrawSnake();
+void DrawScore();
+void DrawGameOver();
+void DrawStartScreen();
 
 int main() {
 #if defined (__linux__)
@@ -54,7 +163,7 @@ int main() {
         return -1;
     }
 
-    glfwSetKeyCallback(window, keyCallback);
+    glfwSetKeyCallback(window, KeyCallback);
     glfwMakeContextCurrent(window);
 
     glewExperimental = GL_TRUE;
@@ -63,147 +172,94 @@ int main() {
         return -1;
     }
 
-    std::string vertexShaderSource = R"(
-        #version 410 core
-
-        in vec3 position;
-        in vec3 color;
-
-        uniform vec2 uOffset;
-
-        out vec3 vColor;
-
-        void main() {
-            vColor = color;
-
-            vec3 pos = position;
-            pos.xy += uOffset;
-
-            gl_Position = vec4(pos, 1.0);
-        }
-    )";
-
     GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-
     const char* vertexShaderCStr = vertexShaderSource.c_str();
-
     glShaderSource(vertexShader, 1, &vertexShaderCStr, nullptr);
-
     glCompileShader(vertexShader);
 
     GLint success;
+    char infoLog[512];
     glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-
-    if (!success) {
-        char infoLog[512];
+    if (!success) {   
         glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
         std::cerr << "ERROR:VERTEX_SHADER_COMPILATION_FAILED" << infoLog << std::endl;
+        glfwTerminate();
+        return -1;
     }
 
-    std::string fragmentShaderSource = R"(
-        #version 410 core
-        out vec4 fragColor;
-
-        in vec3 vColor;
-        uniform vec4 uColor;
-
-        void main() {
-            fragColor = vec4(vColor, 1.0) * uColor;
-        }
-    )";
-
     GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-
     const char* fragmentShaderCStr = fragmentShaderSource.c_str();
-
     glShaderSource(fragmentShader, 1, &fragmentShaderCStr, nullptr);
-
     glCompileShader(fragmentShader);
 
     glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-
     if (!success) {
-        char infoLog[512];
         glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
         std::cerr << "ERROR:FRAGMENT_SHADER_COMPILATION_FAILED" << infoLog << std::endl;
+        glfwTerminate();
+        return -1;
     }
 
     GLuint shaderProgram = glCreateProgram();
-
     glAttachShader(shaderProgram, vertexShader);
     glAttachShader(shaderProgram, fragmentShader);
-
-    glBindAttribLocation(shaderProgram, 0, "position");
-
     glLinkProgram(shaderProgram);
 
     glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
     if (!success) {
-        char infoLog[512];
         glGetProgramInfoLog(shaderProgram, 512, nullptr, infoLog);
         std::cerr << "ERROR:PROGRAM_SHADER_LINKING_FAILED" << infoLog << std::endl;
+        glfwTerminate();
+        return -1;
     }
 
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 
+    uOffsetLoc = glGetUniformLocation(shaderProgram, "uOffset");
+    uScaleLoc = glGetUniformLocation(shaderProgram, "uScale");
+    uColorLoc = glGetUniformLocation(shaderProgram, "uColor");
+
     std::vector<float> vertices = {
-        0.5f, 0.5f, 0.0f, 1.0f, 0.0f, 0.0f,
-        -0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 0.0f,
-        -0.5f, -0.5f, 0.0f, 0.0f, 0.0f, 1.0f,
-        0.5f, -0.5f, 0.0f, 1.0f, 1.0f, 0.0f
+        -0.5f, -0.5f,
+         0.5f, -0.5f,
+        -0.5f,  0.5f,
+         0.5f,  0.5f
     };
 
-    std::vector<unsigned int> indices = {
-        0, 1, 2,
-        0, 2, 3
-    };
-
-    GLuint vbo;
-    glGenBuffers(1, &vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-    GLuint ebo;
-    glGenBuffers(1, &ebo);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-
-    GLuint vao;
     glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
 
-    glVertexAttribPointer(0, 3, GL_FLOAT, false, 6 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-
-    glVertexAttribPointer(1, 3, GL_FLOAT, false, 6 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
 
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
-    GLint uColorLoc = glGetUniformLocation(shaderProgram, "uColor");
-    GLint uOffsetLoc = glGetUniformLocation(shaderProgram, "uOffset");
+    InitGame();
 
+    auto lastTime = std::chrono::high_resolution_clock::now();
     while (!glfwWindowShouldClose(window)) {
-        glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
+        lastTime = currentTime;
 
-        glUseProgram(shaderProgram);
-        glUniform4f(uColorLoc, 0.0f, 1.0f, 0.0f, 1.0f);
-        glUniform2f(uOffsetLoc, offset.x, offset.y);
-        glBindVertexArray(vao);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-
-        glfwSwapBuffers(window);
         glfwPollEvents();
+
+        UpdateGame(deltaTime);
+
+        RenderGame(window);
     }
 
-    glfwTerminate();
+    glDeleteVertexArrays(1, &vao);
+    glDeleteBuffers(1, &vbo);
+    glDeleteProgram(shaderProgram);
 
+    glfwTerminate();
     return 0;
 }
+
